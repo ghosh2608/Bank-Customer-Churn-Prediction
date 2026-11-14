@@ -1,0 +1,19 @@
+# Core data stack
+numpy
+pandas
+scipy
+pyodbc
+
+# Visualization
+matplotlib
+seaborn
+
+# Modelling
+scikit-learn
+joblib
+xgboost
+
+# Notebooks
+jupyter
+ipykernel
+notebook
