@@ -1,257 +1,195 @@
 # Bank Customer Churn Prediction
 
-An end-to-end machine learning pipeline for predicting customer churn in the banking sector. The project covers data cleaning, SQL-based exploratory analysis, feature engineering, statistical hypothesis testing, and benchmarking of five classification models.
+End-to-end churn pipeline for retail banking: Excel → cleaning → SQL Server → SQL EDA → statistical tests → four benchmarked classifiers.
+
+| 10,000 customers | 20.4% churn | 19 model features | 4 models benchmarked | Best ROC-AUC |
+|:---:|:---:|:---:|:---:|:---:|
+| 6 countries | 3.9 : 1 imbalance | 9 inputs + 2 engineered | LogReg · RF · SVM · XGBoost | **0.838 (XGBoost)** |
 
 ---
 
-## Table of Contents
+## Key Findings
 
-- [Overview](#overview)
-- [Dataset](#dataset)
-- [Project Structure](#project-structure)
-- [Tech Stack](#tech-stack)
-- [Methodology](#methodology)
-- [Model Performance](#model-performance)
-- [Statistical Testing](#statistical-testing)
-- [Getting Started](#getting-started)
-
----
-
-## Overview
-
-Customer churn is a critical metric for banks — acquiring new customers costs significantly more than retaining existing ones. This project builds a predictive model to identify customers likely to leave, enabling proactive retention strategies.
-
-**Key highlights:**
-- 10,000 customer records across 6 geographies
-- 12 raw features engineered into 19 model-ready features
-- 5 classification models trained and benchmarked
-- 3 statistical hypothesis tests conducted with effect size analysis
+- **Age is the strongest signal.** Churn is 7.6% under 30, 19.0% at 30–50 and **44.6% over 50** (56.0% for ages 50–59).
+- **Product count is U-shaped.** 1 product: 27.7% · **2 products: 7.6%** · 3 products: 82.7% · 4 products: 100% (only 60 customers).
+- **Inactive members churn almost twice as often:** 26.9% vs 14.3% (χ² = 243, p < 0.001).
+- **Women churn more than men:** 25.1% vs 16.5%.
+- **No effect:** geography (19.4%–21.1%), credit card ownership (20.8% vs 20.2%), salary, and balance level.
+- **XGBoost ranks best.** Its top-scored 10% of customers contain **40.9% of all churners** (4.1× lift).
 
 ---
 
 ## Dataset
 
-| Attribute | Detail |
+| Item | Detail |
 |---|---|
-| Records | 10,000 customers |
-| Source Tables | Demographic, Account, Location |
+| Source tables | `Demographic`, `Account`, `Location` (sheets of `data/raw/raw_data.xlsx`) |
+| Target | `Churned` (1 = churned, 0 = retained): 2,037 vs 7,963 customers |
 | Geographies | Germany, France, Spain, UK, Canada, USA |
-| Target Variable | `Churned` (binary: 0 = Retained, 1 = Churned) |
-| Churn Rate | ~20.4% (imbalanced — 3.8:1 ratio) |
-
-### Features
-
-| Feature | Type | Description |
-|---|---|---|
-| Gender | Categorical | Male / Female |
-| Age | Numerical | Customer age (18–92) |
-| Salary | Numerical | Estimated salary |
-| Geography | Categorical | Country of residence |
-| Tenure | Numerical | Years with the bank (0–10) |
-| Balance | Numerical | Account balance |
-| NumProducts | Numerical | Number of bank products held (1–4) |
-| HasCreditCard | Binary | Whether the customer has a credit card |
-| IsActive | Binary | Whether the customer is an active member |
-
-### Engineered Features
-
-| Feature | Formula |
-|---|---|
-| BalanceSalaryRatio | Balance / Salary |
-| TenureByAge | Tenure / Age |
+| Inputs | `Gender`, `Age` (18–92), `Salary`, `Geography`, `Tenure` (0–10), `Balance`, `NumProducts` (1–4), `HasCreditCard`, `IsActive` |
+| Engineered | `BalanceSalaryRatio = Balance / Salary`, `TenureByAge = Tenure / Age` |
+| Missing data | `Balance` null in **3,617 rows (36.2%)**, filled with the mean (119,827.49) |
+| Dropped | `Name`, `AccountId` |
 
 ---
 
-## Project Structure
+## Pipeline
 
 ```
-Bank Churn Project/
-│
+raw_data.xlsx ─► cleaning scripts ─► 3 cleaned CSVs ─► SQL Server (BankChurn)
+                                                          │
+                       ┌──────────────────────────────────┼───────────────────────┐
+                       ▼                                  ▼                       ▼
+                 EDA SQL queries                 statistical tests         preprocessing.py
+                                                                                  │
+                                                                                  ▼
+                                                                      dataset_bundle.pkl
+                                                                                  │
+                                                                                  ▼
+                                                              5 model notebooks (+ evaluation script)
+```
+
+1. **Clean:** validate types and categories, impute `Balance`, drop identifiers.
+2. **Ingest:** load into three SQL Server tables (`demographic`, `account`, `location`).
+3. **Explore:** T-SQL with CTEs, a window function and a parameterised filter.
+4. **Preprocess:** join in SQL, 80/20 split (`random_state=200`: 8,000 train / 2,000 test), engineer ratios, `StandardScaler` (fit on train only), one-hot encode.
+5. **Model:** `GridSearchCV` optimising F1 with class weighting for imbalance.
+
+---
+
+## Model Performance
+
+Test set: 2,000 customers, 374 churners (18.7%). Default 0.5 cutoff.
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC | PR-AUC |
+|---|---:|---:|---:|---:|---:|---:|
+| Logistic Regression | 68.6% | 32.8% | 65.2% | 43.7% | 0.743 | 0.396 |
+| Random Forest | **81.5%** | **50.4%** | 63.6% | **56.3%** | 0.828 | 0.614 |
+| SVM (RBF) | 79.0% | 46.0% | **71.9%** | 56.1% | 0.829 | 0.631 |
+| **XGBoost** | 79.4% | 46.4% | 67.9% | 55.2% | **0.838** | **0.649** |
+| SVM (Poly) | not completed | | | | | |
+
+**Confusion matrices** (churn = positive):
+
+| Model | TN | FP | FN | TP |
+|---|---:|---:|---:|---:|
+| Logistic Regression | 1,127 | 499 | 130 | 244 |
+| Random Forest | 1,392 | 234 | 136 | 238 |
+| SVM (RBF) | 1,310 | 316 | 105 | 269 |
+| XGBoost | 1,333 | 293 | 120 | 254 |
+
+**Best hyperparameters**
+
+| Model | Settings |
+|---|---|
+| Logistic Regression | `C=0.1`, `penalty='l2'`, `class_weight='balanced'` |
+| Random Forest | 300 trees, `max_depth=15`, `min_samples_leaf=4`, `min_samples_split=10`, `class_weight='balanced'` |
+| SVM (RBF) | `C=1`, `gamma='auto'`, `class_weight='balanced'` |
+| XGBoost | `n_estimators=20`, `max_depth=5`, `learning_rate=0.3`, `min_child_weight=10`, `gamma=0.1`, `subsample=1`, `colsample_bytree=1`, `scale_pos_weight=3.81` |
+
+**Takeaways**
+
+- XGBoost has the best ranking quality (ROC-AUC 0.838, PR-AUC 0.649). The gap to Random Forest and SVM-RBF is about 0.01 AUC on only 374 churners, so treat it as a lead, not a landslide.
+- Accuracy is misleading here: predicting "nobody churns" scores 81.3%. Class weighting lowers accuracy but lifts recall from roughly 16–43% (unweighted runs) to **64–72%**.
+- Moving XGBoost's cutoff trades precision for recall:
+
+| Cutoff | Recall | Precision | Customers flagged |
+|---:|---:|---:|---:|
+| 0.3 | 86.9% | 31.6% | 1,030 |
+| 0.5 | 67.9% | 46.4% | 547 |
+| 0.7 | 53.2% | 62.6% | 318 |
+
+**Top features** (importance): Random Forest: `Age` 0.299, `NumProducts` 0.178, `TenureByAge` 0.095. XGBoost: `NumProducts` 0.206, `Age` 0.195, `IsActive_True` 0.171.
+
+---
+
+## Statistical Testing
+
+| Test | Question | Result | Effect size | Verdict |
+|---|---|---|---|---|
+| Welch's t-test | Balance: churned vs retained | 120,521 vs 119,650; t = 1.35, p = 0.176 | Cohen's d = 0.036 | Not significant |
+| Chi-square | `IsActive` vs churn | χ² = 242.99, df = 1, p ≈ 9e-55 | Cramér's V = 0.156 | **Significant**, modest effect |
+| One-way ANOVA | Tenure across countries | F = 0.915, p = 0.470 | η² = 0.0005 | Not significant |
+
+Levene's test showed unequal balance variances (p ≈ 1e-9), which is why Welch's t-test was used.
+
+---
+
+## SQL Analysis
+
+| Query | Purpose | Result |
+|---|---|---|
+| `EDA.sql` | Churn by gender | Female 25.1%, Male 16.5% |
+| `EDA2.sql` | Churn by country × age group | Over-50s churn 40.7%–49.3% in every country; under-30s 5.7%–9.8% |
+| `EDA3.sql` | Parameterised filter (`@MinTenure`, `@MaxBalance`, `@MaxProducts`) | 219 customers with tenure > 2, balance < 70,000, products < 3 (25.1% churn) |
+
+---
+
+## Repository Structure
+
+```
+Bank-Customer-Churn-Prediction/
 ├── data/
-│   ├── raw/                        # Original dataset (Excel)
-│   │   └── raw_data.xlsx
-│   └── processed/                  # Cleaned CSVs
-│       ├── cleaned_demographic.csv
-│       ├── cleaned_account.csv
-│       └── cleaned_location.csv
-│
+│   ├── raw/raw_data.xlsx                  # 3 sheets: Demographic, Location, Account
+│   └── processed/                         # cleaned_demographic / account / location CSVs
 ├── scripts/
-│   ├── data_cleaning/              # Data validation & cleaning
-│   │   ├── functions.py            # Reusable utility functions
-│   │   ├── demographic.py
-│   │   ├── Account.py
-│   │   └── location.py
-│   └── data_ingestion/             # SQL Server data loading
-│       └── sql_connection.py
-│
-├── eda_queries/                    # SQL-based exploratory analysis
-│   ├── EDA.sql                     # Churn rate by gender
-│   ├── EDA2.sql                    # Churn by geography × age segment
-│   └── EDA3.sql                    # Parameterized customer filtering
-│
+│   ├── data_cleaning/                     # functions.py, demographic.py, Account.py, location.py
+│   └── data_ingestion/sql_connection.py   # CSV → SQL Server
+├── eda_queries/                           # EDA.sql, EDA2.sql, EDA3.sql
+├── statistical_testing/
+│   └── statistical_testing.ipynb          # t-test, chi-square, ANOVA + effect sizes
 ├── predictive_modelling/
 │   ├── processed_data/
-│   │   ├── preprocessing.py        # Feature engineering & scaling
-│   │   └── dataset_bundle.pkl      # Serialized train/test splits
+│   │   ├── preprocessing.py               # features, scaling, encoding, split
+│   │   └── dataset_bundle.pkl             # X_train / y_train / X_test / y_test
 │   └── experiments/
 │       ├── exp_LogisticReg.ipynb
 │       ├── exp_RandomForest.ipynb
 │       ├── exp_SVM_RBF.ipynb
-│       ├── exp_SVM_Poly.ipynb
+│       ├── exp_SVM_Poly.ipynb             # grid search interrupted
 │       ├── exp_XGBoost.ipynb
-│       └── evaluation_script.py    # Standardized evaluation metrics
-│
-├── statistical_testing/
-│   └── statistical_testing.ipynb   # t-test, Chi-Square, ANOVA
-│
-└── .gitignore
+│       └── evaluation_script.py           # evaluate_model()
+└── README.md
 ```
 
 ---
 
 ## Tech Stack
 
-| Layer | Tools |
-|---|---|
-| Language | Python 3.14 |
-| Data Processing | Pandas, NumPy |
-| Database | Microsoft SQL Server, pyodbc |
-| Machine Learning | scikit-learn, XGBoost |
-| Statistical Analysis | SciPy |
-| Visualization | Seaborn, Matplotlib |
-| Serialization | Joblib |
-
----
-
-## Methodology
-
-### 1. Data Cleaning
-- Validated data types and categorical values using reusable utility functions
-- Imputed missing `Balance` values with column mean
-- Removed non-predictive columns (`Name`, `AccountId`)
-- Exported cleaned data to CSV for downstream use
-
-### 2. Data Ingestion
-- Loaded cleaned data into a normalized SQL Server database (3 tables: `demographic`, `account`, `location`)
-- Enabled SQL-based exploratory analysis with JOINs across tables
-
-### 3. Exploratory Data Analysis (SQL)
-- Analyzed churn rate segmented by gender, geography, and age groups
-- Used CTEs, window functions, and parameterized queries
-
-### 4. Preprocessing & Feature Engineering
-- Created `BalanceSalaryRatio` and `TenureByAge` as interaction features
-- Applied `StandardScaler` normalization on numerical features
-- One-hot encoded categorical variables (`Gender`, `Geography`, `HasCreditCard`, `IsActive`)
-- 80/20 train-test split (random state = 200)
-
-### 5. Model Training & Evaluation
-- Trained 5 classification models with standardized evaluation
-- Metrics: Accuracy, Precision, Recall, F1-Score, ROC-AUC
-
----
-
-## Model Performance
-
-| Model | Accuracy | Precision | Recall | F1-Score | ROC-AUC |
-|---|---|---|---|---|---|
-| Logistic Regression | 82.25% | 59.60% | 15.78% | 24.95% | 0.7414 |
-| Random Forest | 85.65% | 71.43% | 38.77% | 50.26% | 0.8097 |
-| SVM (RBF Kernel) | 86.35% | **81.76%** | 34.76% | 48.78% | 0.8032 |
-| SVM (Poly Kernel) | 86.30% | 82.47% | 33.96% | 48.11% | — |
-| **XGBoost** | 85.05% | 64.94% | **43.58%** | **52.16%** | **0.8098** |
-
-**Best overall model:** XGBoost — highest ROC-AUC (0.81), best F1-Score (0.52), and strongest recall for identifying churners.
-
-### Top Predictive Features
-
-| Rank | Random Forest | XGBoost |
-|---|---|---|
-| 1 | Age (0.222) | NumProducts (0.269) |
-| 2 | NumProducts (0.120) | IsActive (0.183) |
-| 3 | Salary (0.117) | Age (0.115) |
-
----
-
-## Statistical Testing
-
-Three hypothesis tests were conducted to validate feature–churn relationships:
-
-### Welch's t-test — Balance vs. Churn
-| Metric | Value |
-|---|---|
-| Churned Mean Balance | $120,521 |
-| Retained Mean Balance | $119,650 |
-| t-statistic | 1.353 |
-| p-value | 0.176 |
-| Cohen's d | 0.036 |
-| **Conclusion** | **No significant difference** — balance alone does not predict churn |
-
-### Chi-Square Test — IsActive vs. Churn
-| Metric | Value |
-|---|---|
-| χ² Statistic | 242.99 |
-| p-value | < 0.001 |
-| Degrees of Freedom | 1 |
-| Cramér's V | 0.156 |
-| **Conclusion** | **Statistically significant** — inactive customers churn at a substantially higher rate |
-
-### One-Way ANOVA — Tenure across Geographies
-| Metric | Value |
-|---|---|
-| F-statistic | 0.915 |
-| p-value | 0.470 |
-| η² (Eta Squared) | 0.0005 |
-| **Conclusion** | **No significant difference** — tenure does not vary meaningfully across countries |
+Python · pandas · NumPy · scikit-learn · XGBoost · SciPy · seaborn / matplotlib · SQL Server + pyodbc · joblib
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-
-- Python 3.10+
-- Microsoft SQL Server (for data ingestion and EDA queries)
-
-### Installation
-
 ```bash
 git clone https://github.com/ghosh2608/Bank-Customer-Churn-Prediction.git
 cd Bank-Customer-Churn-Prediction
-
-python -m venv myenv
-myenv\Scripts\activate        # Windows
-source myenv/bin/activate     # macOS/Linux
-
+python -m venv myenv && source myenv/bin/activate      # Windows: myenv\Scripts\activate
 pip install pandas numpy scikit-learn xgboost scipy seaborn matplotlib pyodbc joblib openpyxl
 ```
 
-### Running the Pipeline
+| Step | Command | Needs SQL Server |
+|---|---|:---:|
+| Clean data | `cd scripts/data_cleaning && python demographic.py && python Account.py && python location.py` | No |
+| Load database | `cd scripts/data_ingestion && python sql_connection.py` | Yes |
+| Preprocess | `cd predictive_modelling/processed_data && python preprocessing.py` | Yes |
+| Train models | Run the notebooks in `predictive_modelling/experiments/` | No |
+| Statistical tests | Run `statistical_testing/statistical_testing.ipynb` | Yes |
 
-1. **Data Cleaning** — Run the cleaning scripts to regenerate processed CSVs:
-   ```bash
-   cd scripts/data_cleaning
-   python demographic.py
-   python Account.py
-   python location.py
-   ```
-
-2. **Data Ingestion** *(requires SQL Server)* — Load cleaned data into the database:
-   ```bash
-   cd scripts/data_ingestion
-   python sql_connection.py
-   ```
-
-3. **Preprocessing** *(requires SQL Server)* — Generate the train/test dataset bundle:
-   ```bash
-   cd predictive_modelling/processed_data
-   python preprocessing.py
-   ```
-
-4. **Model Experiments** — Open and run the Jupyter notebooks in `predictive_modelling/experiments/`
-
-5. **Statistical Testing** — Open and run `statistical_testing/statistical_testing.ipynb`
-
-> **Note:** The pre-built `dataset_bundle.pkl` is included in the repository, so you can run the experiment notebooks directly without needing SQL Server.
+The pre-built `dataset_bundle.pkl` is included, so the model notebooks run without SQL Server.
 
 ---
+
+## Notes and Roadmap
+
+**How to read the metrics.** The notebooks print recall, precision and F1. Accuracy, ROC-AUC, PR-AUC and confusion matrices above were recomputed from the best hyperparameters on `dataset_bundle.pkl`; the recall, precision and F1 match the notebook outputs. `evaluate_model` currently computes ROC-AUC from hard predictions (it should use `predict_proba`), so its printed "ROC_AUC" is a balanced accuracy, not the AUC shown here.
+
+**Known limitations**
+
+- `Balance` imputation: 36.2% of values share one number, and the missingness itself is informative (13.8% churn when null vs 24.1% otherwise).
+- Single, unstratified 80/20 split with no confidence intervals; the cutoff is the default 0.5.
+- Static snapshot with no dates, so `IsActive` and `NumProducts` may partly reflect customers already leaving.
+- The fitted scaler and models are not saved, and `evalutaion_script.py` is a duplicate of `evaluation_script.py`.
+
+**Next steps:** `Balance_missing` flag, stratified split with repeated CV, cost-based cutoff selection, probability calibration, SHAP explanations, a scikit-learn `Pipeline`, and a FastAPI/Streamlit scoring app.
